@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using AcademicNoveltyAnalysis.Data;
 using AcademicNoveltyAnalysis.Models;
 using System.Net.Http;
+using System.Data;
 
 namespace AcademicNoveltyAnalysis.Services
 {
@@ -14,44 +15,55 @@ namespace AcademicNoveltyAnalysis.Services
         public DataCollectorService(AcademicNoveltyAnalysis.Data.DbContext context)
         {
             _httpClient = new HttpClient();
-            // API'ye kendimizi tanıtmak için bir User-Agent eklemek iyidir
+            // API güvenliği ve tanınabilirlik için User-Agent şart
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "AcademicAnalysisProject/1.0");
             _context = context;
         }
 
         public async Task<int> CollectBulkDataAsync()
         {
-            // 1. KRİTER: Homojen dağılım için 10 farklı disiplin
-            string[] categories = { 
-    "Computer Science", "Artificial Intelligence", "Machine Learning",
-    "Cyber Security", "Medicine", "Biotechnology", "Nanotechnology",
-    "Economics", "Psychology", "Environmental Science", "Sociology",
-    "Political Science", "Law", "History", "Education" 
-};
+            // 1. STRATEJİ: Farklı disiplinlerden homojen veri çekimi
+            string[] categories = {
+                "Computer Science", "Artificial Intelligence", "Machine Learning",
+                "Cyber Security", "Medicine", "Biotechnology", "Nanotechnology",
+                "Economics", "Psychology", "Environmental Science", "Sociology",
+                "Political Science", "Law", "History", "Education"
+            };
 
-            int totalSaved = 0;
-            int batchSize = 100; // Her istekte çekilecek miktar (Maksimum 100)
-            int stepsPerCategory = 10; // Her kategori için 3 sayfa ilerle (3 x 100 = 300 potansiyel veri/kategori)
+            int totalSavedInThisSession = 0;
+            int batchSize = 100; // API limiti
+            int stepsPerCategory = 10; // Kategori başına sayfa ilerlemesi
+            const int targetLimit = 5000; // Scrum Master Kararı: Maksimum veri sınırı
 
             using (var connection = _context.CreateConnection())
             {
                 foreach (var cat in categories)
                 {
+                    // Her kategori başında veritabanındaki toplam sayıyı kontrol et
+                    int currentTotal = await GetCurrentCount(connection);
+                    if (currentTotal >= targetLimit) break;
+
                     for (int i = 0; i < stepsPerCategory; i++)
                     {
-                        int offset = i * batchSize;
+                        // Sayfa içinde de kontrol et (5000'i geçer geçmez durması için)
+                        currentTotal = await GetCurrentCount(connection);
+                        if (currentTotal >= targetLimit)
+                        {
+                            Console.WriteLine($"--- Hedeflenen {targetLimit} veriye ulaşıldı. İşlem durduruluyor. ---");
+                            goto EndOfProcess; // İç içe döngülerden hızlıca çıkış
+                        }
 
-                        // 2. KRİTER: 2020 Sonrası Güncel Veri & Offset ile Sayfalama
+                        int offset = i * batchSize;
                         string url = $"https://api.semanticscholar.org/graph/v1/paper/search?query={cat}&limit={batchSize}&offset={offset}&fields=paperId,title,abstract,year&year=2020-2026";
 
                         try
                         {
                             var response = await _httpClient.GetAsync(url);
 
-                            // Hız sınırına takılırsak (429 Hatası) biraz daha fazla bekle
+                            // API Hız Sınırı (Rate Limit) Yönetimi
                             if ((int)response.StatusCode == 429)
                             {
-                                await Task.Delay(5000);
+                                await Task.Delay(5000); // 5 saniye bekle ve devam et
                                 continue;
                             }
 
@@ -64,13 +76,13 @@ namespace AcademicNoveltyAnalysis.Services
 
                             foreach (var paper in result.Data)
                             {
-                                // 3. KRİTER: Kalite Kontrol (Gerçek ve doyurucu veri)
-                                // Abstract boşsa veya çok kısaysa (150 karakter altı) anlamsal analiz için yetersizdir.
+                                // KALİTE KRİTERİ: Abstract dolu ve yeterli uzunlukta olmalı
                                 if (string.IsNullOrWhiteSpace(paper.Abstract) || paper.Abstract.Length < 150)
                                     continue;
 
                                 paper.Category = cat;
 
+                                // MÜKERRER KONTROLÜ VE KAYIT (Dapper SQL)
                                 string sql = @"
                                     IF NOT EXISTS (SELECT 1 FROM Papers WHERE PaperId = @PaperId)
                                     BEGIN
@@ -79,10 +91,10 @@ namespace AcademicNoveltyAnalysis.Services
                                     END";
 
                                 var affectedRows = await connection.ExecuteAsync(sql, paper);
-                                totalSaved += affectedRows;
+                                totalSavedInThisSession += affectedRows;
                             }
 
-                            // API güvenliği için her sayfa arasında bekleme
+                            // API'yi yormamak için her sayfa sonrası kısa bekleme
                             await Task.Delay(1500);
                         }
                         catch (Exception ex)
@@ -92,11 +104,18 @@ namespace AcademicNoveltyAnalysis.Services
                     }
                 }
             }
-            return totalSaved;
+
+        EndOfProcess:
+            return totalSavedInThisSession;
+        }
+
+        // Yardımcı metod: SQL'den o anki toplam satır sayısını çeker
+        private async Task<int> GetCurrentCount(IDbConnection connection)
+        {
+            return await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Papers");
         }
     }
 
-    // JSON verisini C# nesnesine eşlemek için yardımcı sınıf
     public class SemanticResponse
     {
         [JsonProperty("data")]
