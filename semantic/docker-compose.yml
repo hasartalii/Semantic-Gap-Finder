@@ -1,0 +1,29 @@
+# AI Integration Edit - 29.04.2026
+# Fullstack sistemin konteyner orkestrasyonu için docker-compose eklendi
+# Sistem: Root / Docker
+
+services:
+  ai-service:
+    build: ./ai
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./ai:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  backend-api:
+    build: ./backend
+    ports:
+      - "5208:5208"
+    depends_on:
+      - ai-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+
+  frontend-ui:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend-api
