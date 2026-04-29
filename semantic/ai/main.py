@@ -5,11 +5,13 @@
 # Sistem: AI / Yapay Zeka
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from pydantic import BaseModel
 import os
 import re
 import faiss
+import io
+import PyPDF2
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from fastapi.middleware.cors import CORSMiddleware
@@ -148,6 +150,56 @@ async def analyze_idea(request: AnalysisRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/extract-pdf")
+async def extract_pdf(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        print(f"DEBUG: PDF alindi, boyut: {len(content)} bytes")
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+        full_text = ""
+        # Ilk 3 sayfayi tara (genelde abstract buradadir)
+        for i in range(min(3, len(pdf_reader.pages))):
+            page_text = pdf_reader.pages[i].extract_text()
+            if page_text:
+                full_text += page_text + "\n"
+        
+        print(f"DEBUG: Ayiklanan toplam metin uzunlugu: {len(full_text)}")
+        
+        # Basit Abstract yakalama mantigi
+        abstract = ""
+        # Daha gelismis Abstract yakalama (farkli yazim tarzlari icin)
+        abstract = ""
+        # 1. Klasik Abstract basligi
+        match = re.search(r'(?i)abstract[:\-\s\n]+(.*?)(?=\n\s*(?:introduction|keywords|index terms|1\.)|$)|\n\d+\.\s+Introduction', full_text, re.DOTALL)
+        
+        if not match:
+            # 2. Alternatif: "A B S T R A C T" gibi bosluklu yazimlar
+            match = re.search(r'(?i)a\s*b\s*s\s*t\s*r\s*a\s*c\s*t[:\-\s\n]+(.*?)(?=\n\s*i\s*n\s*t\s*r\s*o|$)', full_text, re.DOTALL)
+
+        if match:
+            abstract = match.group(1).strip()
+            print("DEBUG: Abstract bulundu (regex)")
+        else:
+            # 3. Hicbir sey bulunamazsa ilk 1500 karakteri temizleyip al (Sayfa basi basliklari vs. temizle)
+            lines = full_text.split('\n')
+            # Ilk 5 satiri (baslik, yazar vs olabilir) atla, sonraki 10 satiri al
+            abstract = "\n".join(lines[5:15]).strip()
+            print("DEBUG: Abstract anahtar kelimesi bulunamadi, metin blogu alindi")
+
+        if len(abstract) < 50 and len(full_text) > 100:
+            # Eger ayiklanan abstract cok kisaysa direkt ilk blogu al
+            abstract = full_text[:1500].strip()
+
+        # Baslik tahmini: Ilk 200 karakterdeki ilk anlamli satir
+        lines = [l.strip() for l in full_text.split('\n') if len(l.strip()) > 10]
+        title = lines[0] if lines else "Bilinmeyen Baslik"
+
+        return {"title": title, "abstract": abstract}
+    except Exception as e:
+        print(f"DEBUG: PDF Hatasi: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"PDF okuma hatasi: {str(e)}")
 
 
 if __name__ == "__main__":

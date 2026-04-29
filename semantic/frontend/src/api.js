@@ -40,3 +40,32 @@ export const analyzeIdea = async (title, summary) => {
         throw error;
     }
 };
+
+export const getDoiMetadata = async (doi) => {
+    try {
+        const response = await fetch(`${API_URL}/api/Analysis/doi-metadata?doi=${encodeURIComponent(doi)}`);
+        if (!response.ok) throw new Error('DOI bulunamadý');
+        return await response.json();
+    } catch (error) {
+        console.error('❌ DOI Hatasý:', error);
+        throw error;
+    }
+};
+
+export const extractPdfMetadata = async (file) => {
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${API_URL}/api/Analysis/extract-pdf`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) throw new Error('PDF ayryþtyrma hatasý');
+        return await response.json();
+    } catch (error) {
+        console.error('❌ PDF Extraction Hatasý:', error);
+        throw error;
+    }
+};

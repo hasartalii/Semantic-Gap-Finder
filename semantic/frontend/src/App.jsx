@@ -2,9 +2,9 @@ import React, { useState, useEffect } from "react";
 import { Upload, FileText, Search, Sparkles, User, LogOut, ChevronLeft, BookOpen, Quote, Share2, FileCode2, Binary, Database } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 // AI Integration Edit - 29.04.2026
-// analyzeIdea fonksiyonu import listesine eklendi — eksik import nedeniyle buton calismiyor du
+// Analiz, DOI ve PDF extraction fonksiyonlari eklendi
 // Sistem: Frontend
-import { testConnection, analyzeIdea } from "./api";
+import { testConnection, analyzeIdea, getDoiMetadata, extractPdfMetadata } from "./api";
 
 // --- NETWORK GRAPH BİLEŞENİ (Daha Canlı SVG) ---
 const NetworkNode = ({ x, y, size, delay, label, isMain }) => (
@@ -43,6 +43,7 @@ function App() {
   // Sistem: Frontend
   const [inputTitle, setInputTitle] = useState("");
   const [inputSummary, setInputSummary] = useState("");
+  const [doi, setDoi] = useState("");
   const [analysisResult, setAnalysisResult] = useState(null);
 
   // AI Integration Edit - 29.04.2026
@@ -77,6 +78,12 @@ function App() {
   // Frontend butonu ile Backend analiz endpoint'i arasında asenkron bağlantı kuruldu
   // Sistem: Frontend
   const handleAnalyze = async () => {
+    // DOI sekmesindeysek ve alan doluysa önce DOI metadata çek
+    if (activeTab === "doi" && doi && !inputTitle) {
+      await handleDoiFetch();
+      return; // Kullanıcı veriyi görsün, sonra tekrar bassın veya biz devam edelim
+    }
+
     if (!inputTitle || !inputSummary) {
       alert("Lütfen başlık ve özet alanlarını doldurun.");
       return;
@@ -94,19 +101,46 @@ function App() {
     }
   };
 
+  const handleDoiFetch = async () => {
+    if (!doi) return;
+    setLoading(true);
+    setLoadingText("Literatürden DOI bilgileri çekiliyor...");
+    try {
+      const data = await getDoiMetadata(doi);
+      setInputTitle(data.title);
+      setInputSummary(data.summary);
+      setActiveTab("text"); // Veriyi gösterince metin sekmesine geçebiliriz veya PDF'de kalabiliriz
+    } catch (error) {
+      alert("DOI bilgisi alınamadı. Lütfen DOI numarasını kontrol edin.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // AI Integration Edit - 29.04.2026
-  // PDF dosyası seçildiğinde dosya adını başlığa aktarır ve içeriği okur
+  // PDF dosyası seçildiğinde içeriği otomatik ayıklayan fonksiyon
   // Sistem: Frontend
-  const handlePdfFile = (file) => {
+  const handlePdfFile = async (file) => {
     if (!file || file.type !== 'application/pdf') {
       alert('Lütfen geçerli bir PDF dosyası seçin.');
       return;
     }
     setSelectedFile(file);
-    // Dosya adından başlık önerisi (örn: "makale-adi.pdf" -> "Makale Adi")
-    const nameWithoutExt = file.name.replace(/\.pdf$/i, '');
-    const suggestedTitle = nameWithoutExt.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    setInputTitle(suggestedTitle);
+    
+    setLoading(true);
+    setLoadingText("PDF içeriği ayıklanıyor...");
+    try {
+      const data = await extractPdfMetadata(file);
+      setInputTitle(data.title || file.name.replace(/\.pdf$/i, ''));
+      setInputSummary(data.abstract || "");
+    } catch (error) {
+      console.error("Extraction error:", error);
+      // Hata olsa bile en azından dosya adını başlığa koyalım
+      const nameWithoutExt = file.name.replace(/\.pdf$/i, '');
+      setInputTitle(nameWithoutExt.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handlePdfInputChange = (e) => {
@@ -139,6 +173,8 @@ function App() {
       <input 
         type="text" 
         placeholder="Örn: 10.1000/xyz123" 
+        value={doi}
+        onChange={(e) => setDoi(e.target.value)}
         className="w-full max-w-md p-5 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xl font-mono text-purple-600 placeholder:text-slate-400 outline-none focus:border-purple-500 transition-all shadow-inner"
       />
 

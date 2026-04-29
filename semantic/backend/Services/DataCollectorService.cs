@@ -113,6 +113,34 @@ namespace AcademicNoveltyAnalysis.Services
             return totalSavedInThisSession;
         }
 
+        public async Task<Paper> GetPaperByDoiAsync(string doi)
+        {
+            doi = doi.Replace("doi:", "").Trim();
+            string url = $"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=title,abstract,year";
+
+            try
+            {
+                var response = await _httpClient.GetAsync(url);
+                
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    throw new Exception("Bu DOI numarasý literatür veri tabanýnda bulunamadý.");
+                
+                if (response.StatusCode == (System.Net.HttpStatusCode)429)
+                    throw new Exception("API hýz sýnýrýna takýldýk (Rate Limit). Lütfen 1 dakika sonra tekrar deneyin.");
+
+                if (!response.IsSuccessStatusCode) 
+                    throw new Exception($"API Hatasý: {response.StatusCode}");
+
+                var content = await response.Content.ReadAsStringAsync();
+                return JsonConvert.DeserializeObject<Paper>(content);
+            }
+            catch (Exception ex)
+            {
+                // Hatayý yukarý fýrlat ki Controller yakalayabilsin
+                throw new Exception(ex.Message);
+            }
+        }
+
         // Yardımcı metod: SQL'den o anki toplam satır sayısını çeker
         private async Task<int> GetCurrentCount(IDbConnection connection)
         {

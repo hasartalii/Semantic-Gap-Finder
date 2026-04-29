@@ -44,6 +44,36 @@ namespace AcademicNoveltyAnalysis.Services
                 throw new Exception($"AI servisine bağlanılamadı: {ex.Message}");
             }
         }
+
+        public async Task<ExtractionResult> ExtractPdfAsync(Stream pdfStream, string fileName)
+        {
+            using var content = new MultipartFormDataContent();
+            using var streamContent = new StreamContent(pdfStream);
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+            content.Add(streamContent, "file", fileName);
+
+            try
+            {
+                var response = await _httpClient.PostAsync($"{_aiServiceUrl}/extract-pdf", content);
+                response.EnsureSuccessStatusCode();
+
+                var responseJson = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize<ExtractionResult>(responseJson, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"PDF ayrıştırma hatası: {ex.Message}");
+            }
+        }
+    }
+
+    public class ExtractionResult
+    {
+        public string Title { get; set; }
+        public string Abstract { get; set; }
     }
 
     public class AnalysisResult
